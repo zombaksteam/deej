@@ -101,8 +101,6 @@ func (m *sessionMap) getAndAddSessions() error {
 	m.lastSessionRefresh = time.Now()
 	m.unmappedSessions = nil
 
-	m.logger.Warnw("[QWERTY] func (m *sessionMap) getAndAddSessions() error")
-
 	sessions, err := m.sessionFinder.GetAllSessions()
 	if err != nil {
 		m.logger.Warnw("Failed to get sessions from session finder", "error", err)
