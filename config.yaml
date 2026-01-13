@@ -6,6 +6,7 @@
 # windows only - you can use a device's full name, i.e. "Speakers (Realtek High Definition Audio)", to bind it. this works for both output and input devices
 # windows only - you can use 'system' to control the "system sounds" volume
 # important: slider indexes start at 0, regardless of which analog pins you're using!
+# apply volume to all processes from directory: C:\Program Files (x86)\Steam\steamapps\common\*
 slider_mapping:
   0: master
   1: chrome.exe
@@ -13,6 +14,7 @@ slider_mapping:
   3:
     - pathofexile_x64.exe
     - rocketleague.exe
+    - C:\Program Files (x86)\Steam\steamapps\common\*
   4: discord.exe
 
 # set this to true if you want the controls inverted (i.e. top is 0%, bottom is 100%)
