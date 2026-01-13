@@ -16,6 +16,7 @@ type Session interface {
 	// SetMute(m bool) error
 
 	Key() string
+	Path() string
 	Release()
 }
 
@@ -26,7 +27,7 @@ const (
 	sessionCreationLogMessage = "Created audio session instance"
 
 	// format this with s.humanReadableDesc and whatever the current volume is
-	sessionStringFormat = "<session: %s, vol: %.2f>"
+	sessionStringFormat = "<session: %s, vol: %.2f, path: %s>"
 )
 
 type baseSession struct {
@@ -36,6 +37,7 @@ type baseSession struct {
 
 	// used by Key(), needs to be set by child
 	name string
+	path string
 
 	// used by String(), needs to be set by child
 	humanReadableDesc string
@@ -51,4 +53,8 @@ func (s *baseSession) Key() string {
 	}
 
 	return strings.ToLower(s.name)
+}
+
+func (s *baseSession) Path() string {
+	return strings.ToLower(s.path)
 }

@@ -41,7 +41,7 @@ type SliderMoveEvent struct {
 	PercentValue float32
 }
 
-var expectedLinePattern = regexp.MustCompile(`^\d{1,4}(\|\d{1,4})*\r\n$`)
+var expectedLinePattern = regexp.MustCompile(`^\d{1,3}(\|\d{1,3})*\r\n$`)
 
 // NewSerialIO creates a SerialIO instance that uses the provided deej
 // instance's connection info to establish communications with the arduino chip
@@ -238,7 +238,7 @@ func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
 	// trim the suffix
 	line = strings.TrimSuffix(line, "\r\n")
 
-	// split on pipe (|), this gives a slice of numerical strings between "0" and "1023"
+	// split on pipe (|), this gives a slice of numerical strings between "0" and "100"
 	splitLine := strings.Split(line, "|")
 	numSliders := len(splitLine)
 
@@ -258,36 +258,33 @@ func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
 	moveEvents := []SliderMoveEvent{}
 	for sliderIdx, stringValue := range splitLine {
 
-		// convert string values to integers ("1023" -> 1023)
+		// convert string values to integers ("100" -> 100)
 		number, _ := strconv.Atoi(stringValue)
 
 		// turns out the first line could come out dirty sometimes (i.e. "4558|925|41|643|220")
 		// so let's check the first number for correctness just in case
-		if sliderIdx == 0 && number > 1023 {
+		if sliderIdx == 0 && number > 100 {
 			sio.logger.Debugw("Got malformed line from serial, ignoring", "line", line)
 			return
 		}
 
-		// map the value from raw to a "dirty" float between 0 and 1 (e.g. 0.15451...)
-		dirtyFloat := float32(number) / 1023.0
-
-		// normalize it to an actual volume scalar between 0.0 and 1.0 with 2 points of precision
-		normalizedScalar := util.NormalizeScalar(dirtyFloat)
+		// map the value from raw to a float between 0 and 1 (e.g. 0.01, 0.03, etc.)
+		percentValue := float32(number) / 100.0
 
 		// if sliders are inverted, take the complement of 1.0
 		if sio.deej.config.InvertSliders {
-			normalizedScalar = 1 - normalizedScalar
+			percentValue = 1 - percentValue
 		}
 
-		// check if it changes the desired state (could just be a jumpy raw slider value)
-		if util.SignificantlyDifferent(sio.currentSliderPercentValues[sliderIdx], normalizedScalar, sio.deej.config.NoiseReductionLevel) {
+		// check if the value actually changed (use exact comparison to preserve all serial values)
+		if sio.currentSliderPercentValues[sliderIdx] != percentValue {
 
 			// if it does, update the saved value and create a move event
-			sio.currentSliderPercentValues[sliderIdx] = normalizedScalar
+			sio.currentSliderPercentValues[sliderIdx] = percentValue
 
 			moveEvents = append(moveEvents, SliderMoveEvent{
 				SliderID:     sliderIdx,
-				PercentValue: normalizedScalar,
+				PercentValue: percentValue,
 			})
 
 			if sio.deej.Verbose() {

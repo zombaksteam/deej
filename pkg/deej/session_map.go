@@ -97,10 +97,11 @@ func (m *sessionMap) release() error {
 // assumes the session map is clean!
 // only call on a new session map or as part of refreshSessions which calls reset
 func (m *sessionMap) getAndAddSessions() error {
-
 	// mark that we're refreshing before anything else
 	m.lastSessionRefresh = time.Now()
 	m.unmappedSessions = nil
+
+	m.logger.Warnw("[QWERTY] func (m *sessionMap) getAndAddSessions() error")
 
 	sessions, err := m.sessionFinder.GetAllSessions()
 	if err != nil {
@@ -227,30 +228,53 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 
 	// for each possible target for this slider...
 	for _, target := range targets {
-
 		// resolve the target name by cleaning it up and applying any special transformations.
 		// depending on the transformation applied, this can result in more than one target name
 		resolvedTargets := m.resolveTarget(target)
 
 		// for each resolved target...
 		for _, resolvedTarget := range resolvedTargets {
-
-			// check the map for matching sessions
-			sessions, ok := m.get(resolvedTarget)
-
-			// no sessions matching this target - move on
-			if !ok {
-				continue
+			// Path searching
+			isPathSearching := false
+			if strings.HasSuffix(resolvedTarget, "*") {
+				isPathSearching = true
+				matchPrefix := strings.TrimSuffix(resolvedTarget, "*")
+				// Go over all session and compare path
+				m.iterate(func(key string, sessions []Session) {
+					for _, session := range sessions {
+						if session.Path() != "" && strings.HasPrefix(session.Path(), matchPrefix) {
+							if !targetFound {
+								targetFound = true
+							}
+							if session.GetVolume() != event.PercentValue {
+								if err := session.SetVolume(event.PercentValue); err != nil {
+									m.logger.Warnw("Failed to set target session volume", "error", err)
+									adjustmentFailed = true
+								}
+							}
+						}
+					}
+				})
 			}
 
-			targetFound = true
+			if !isPathSearching {
+				// check the map for matching sessions
+				sessions, ok := m.get(resolvedTarget)
 
-			// iterate all matching sessions and adjust the volume of each one
-			for _, session := range sessions {
-				if session.GetVolume() != event.PercentValue {
-					if err := session.SetVolume(event.PercentValue); err != nil {
-						m.logger.Warnw("Failed to set target session volume", "error", err)
-						adjustmentFailed = true
+				// no sessions matching this target - move on
+				if !ok {
+					continue
+				}
+
+				targetFound = true
+
+				// iterate all matching sessions and adjust the volume of each one
+				for _, session := range sessions {
+					if session.GetVolume() != event.PercentValue {
+						if err := session.SetVolume(event.PercentValue); err != nil {
+							m.logger.Warnw("Failed to set target session volume", "error", err)
+							adjustmentFailed = true
+						}
 					}
 				}
 			}
@@ -323,12 +347,13 @@ func (m *sessionMap) applyTargetTransform(specialTargetName string) []string {
 	return nil
 }
 
+// -----------------------------------------------------------------------------
+
 func (m *sessionMap) add(value Session) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
 	key := value.Key()
-
 	existing, ok := m.m[key]
 	if !ok {
 		m.m[key] = []Session{value}
@@ -343,6 +368,15 @@ func (m *sessionMap) get(key string) ([]Session, bool) {
 
 	value, ok := m.m[key]
 	return value, ok
+}
+
+func (m *sessionMap) iterate(f func(string, []Session)) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	for key, value := range m.m {
+		f(key, value)
+	}
 }
 
 func (m *sessionMap) clear() {
@@ -361,6 +395,8 @@ func (m *sessionMap) clear() {
 
 	m.logger.Debug("Session map cleared")
 }
+
+// -----------------------------------------------------------------------------
 
 func (m *sessionMap) String() string {
 	m.lock.Lock()
