@@ -23,12 +23,6 @@ func (d *Deej) initializeTray(onDone func()) {
 		refreshSessions := systray.AddMenuItem("Re-scan audio sessions", "Manually refresh audio sessions if something's stuck")
 		refreshSessions.SetIcon(icon.RefreshSessions)
 
-		if d.version != "" {
-			systray.AddSeparator()
-			versionInfo := systray.AddMenuItem(d.version, "")
-			versionInfo.Disable()
-		}
-
 		systray.AddSeparator()
 		quit := systray.AddMenuItem("Quit", "Stop deej and quit")
 
