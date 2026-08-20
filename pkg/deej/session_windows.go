@@ -3,13 +3,56 @@ package deej
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"syscall"
+	"unsafe"
 
 	ole "github.com/go-ole/go-ole"
 	ps "github.com/keybase/go-ps"
 	wca "github.com/moutend/go-wca"
 	"go.uber.org/zap"
 )
+
+var (
+	kernel32                       = syscall.NewLazyDLL("kernel32.dll")
+	procOpenProcess                = kernel32.NewProc("OpenProcess")
+	procQueryFullProcessImageNameW = kernel32.NewProc("QueryFullProcessImageNameW")
+	procCloseHandle                = kernel32.NewProc("CloseHandle")
+)
+
+const (
+	processQueryLimitedInformation = 0x1000
+)
+
+func getProcessPathByPID(pid uint32) (string, error) {
+	handle, _, err := procOpenProcess.Call(
+		uintptr(processQueryLimitedInformation),
+		uintptr(0),
+		uintptr(pid),
+	)
+	if handle == 0 {
+		return "", err
+	}
+	defer procCloseHandle.Call(handle)
+
+	var buf [1024]uint16
+	size := uint32(len(buf))
+
+	ret, _, err := procQueryFullProcessImageNameW.Call(
+		handle,
+		uintptr(0),
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(unsafe.Pointer(&size)),
+	)
+	if ret == 0 {
+		return "", err
+	}
+
+	rawPath := syscall.UTF16ToString(buf[:size])
+	rawPath = strings.TrimPrefix(rawPath, `\\?\`)
+	return rawPath, nil
+}
 
 var errNoSuchProcess = errors.New("No such process")
 var errRefreshSessions = errors.New("Trigger session refresh")
@@ -76,11 +119,15 @@ func newWCASession(
 
 		s.processName = process.Executable()
 
-		path, err := process.Path()
-		s.baseSession.path = path
-		if err != nil {
-			logger.Warnw("Unable to get path for pid", "pid", pid)
+		path, err := getProcessPathByPID(pid)
+		if err != nil || path == "" {
+			path, err = process.Path()
+			if err != nil {
+				logger.Warnw("Unable to get path for pid", "pid", pid, "error", err)
+			}
 		}
+		path = strings.TrimPrefix(path, `\\?\`)
+		s.baseSession.path = filepath.Clean(path)
 
 		s.name = s.processName
 		s.humanReadableDesc = fmt.Sprintf("%s (pid %d)", s.processName, s.pid)

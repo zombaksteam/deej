@@ -2,6 +2,7 @@ package deej
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -11,6 +12,44 @@ import (
 	"github.com/thoas/go-funk"
 	"go.uber.org/zap"
 )
+
+func isPathTarget(target string) bool {
+	return strings.ContainsAny(target, `/\*`)
+}
+
+func normalizePath(p string) string {
+	p = strings.TrimPrefix(p, `\\?\`)
+	p = strings.ToLower(p)
+	p = filepath.ToSlash(p)
+	return p
+}
+
+func matchPathTarget(sessionPath string, target string) bool {
+	if sessionPath == "" || target == "" {
+		return false
+	}
+
+	normSessionPath := normalizePath(sessionPath)
+	normTarget := normalizePath(target)
+
+	// If target ends with *, it's a directory / prefix pattern
+	if strings.HasSuffix(normTarget, "*") {
+		prefix := strings.TrimSuffix(normTarget, "*")
+		return strings.HasPrefix(normSessionPath, prefix)
+	}
+
+	// Exact match
+	if normSessionPath == normTarget {
+		return true
+	}
+
+	// Glob match fallback
+	if matched, err := filepath.Match(normTarget, normSessionPath); err == nil && matched {
+		return true
+	}
+
+	return false
+}
 
 type sessionMap struct {
 	deej   *Deej
@@ -185,6 +224,10 @@ func (m *sessionMap) sessionMapped(session Session) bool {
 
 	// look through the actual mappings
 	m.deej.config.SliderMapping.iterate(func(sliderIdx int, targets []string) {
+		if matchFound {
+			return
+		}
+
 		for _, target := range targets {
 
 			// ignore special transforms
@@ -193,11 +236,22 @@ func (m *sessionMap) sessionMapped(session Session) bool {
 			}
 
 			// safe to assume this has a single element because we made sure there's no special transform
-			target = m.resolveTarget(target)[0]
+			resolvedTargets := m.resolveTarget(target)
+			if len(resolvedTargets) == 0 {
+				continue
+			}
+			resolvedTarget := resolvedTargets[0]
 
-			if target == session.Key() {
-				matchFound = true
-				return
+			if isPathTarget(resolvedTarget) {
+				if session.Path() != "" && matchPathTarget(session.Path(), resolvedTarget) {
+					matchFound = true
+					return
+				}
+			} else {
+				if resolvedTarget == session.Key() {
+					matchFound = true
+					return
+				}
 			}
 		}
 	})
@@ -232,18 +286,12 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 
 		// for each resolved target...
 		for _, resolvedTarget := range resolvedTargets {
-			// Path searching
-			isPathSearching := false
-			if strings.HasSuffix(resolvedTarget, "*") {
-				isPathSearching = true
-				matchPrefix := strings.TrimSuffix(resolvedTarget, "*")
-				// Go over all session and compare path
+			if isPathTarget(resolvedTarget) {
+				// Go over all sessions and compare path
 				m.iterate(func(key string, sessions []Session) {
 					for _, session := range sessions {
-						if session.Path() != "" && strings.HasPrefix(session.Path(), matchPrefix) {
-							if !targetFound {
-								targetFound = true
-							}
+						if session.Path() != "" && matchPathTarget(session.Path(), resolvedTarget) {
+							targetFound = true
 							if session.GetVolume() != event.PercentValue {
 								if err := session.SetVolume(event.PercentValue); err != nil {
 									m.logger.Warnw("Failed to set target session volume", "error", err)
@@ -253,9 +301,7 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 						}
 					}
 				})
-			}
-
-			if !isPathSearching {
+			} else {
 				// check the map for matching sessions
 				sessions, ok := m.get(resolvedTarget)
 
