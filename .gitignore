@@ -12,3 +12,5 @@ releases/
 *.bin
 logs/
 preferences.yaml
+
+!driver-2026-06-24/CH341SER.EXE
