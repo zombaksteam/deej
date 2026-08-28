@@ -1,6 +1,8 @@
 package deej
 
 import (
+	"fmt"
+
 	"github.com/getlantern/systray"
 
 	"github.com/omriharel/deej/pkg/deej/icon"
@@ -17,6 +19,15 @@ func (d *Deej) initializeTray(onDone func()) {
 		systray.SetTitle("Deej")
 		systray.SetTooltip("Deej")
 
+		versionText := d.version
+		if versionText == "" {
+			versionText = fmt.Sprintf("Version %s", Version)
+		}
+		versionItem := systray.AddMenuItem(versionText, fmt.Sprintf("Open GitHub repository (%s)", RepoURL))
+		versionItem.SetIcon(icon.DeejLogo)
+
+		systray.AddSeparator()
+
 		editConfig := systray.AddMenuItem("Edit configuration", "Open config file with notepad")
 		editConfig.SetIcon(icon.EditConfig)
 
@@ -30,6 +41,14 @@ func (d *Deej) initializeTray(onDone func()) {
 		go func() {
 			for {
 				select {
+
+				// version info / repo link
+				case <-versionItem.ClickedCh:
+					logger.Info("Version menu item clicked, opening GitHub repository in browser")
+
+					if err := util.OpenURL(logger, RepoURL); err != nil {
+						logger.Warnw("Failed to open repository URL", "error", err)
+					}
 
 				// quit
 				case <-quit.ClickedCh:

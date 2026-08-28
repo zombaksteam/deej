@@ -94,3 +94,33 @@ func getCurrentWindowProcessNames() ([]string, error) {
 	lastGetCurrentWindowResult = result
 	return result, nil
 }
+
+var (
+	shell32           = syscall.NewLazyDLL("shell32.dll")
+	procShellExecuteW = shell32.NewProc("ShellExecuteW")
+)
+
+func openURLPlatform(url string) error {
+	verb, err := syscall.UTF16PtrFromString("open")
+	if err != nil {
+		return err
+	}
+	urlPtr, err := syscall.UTF16PtrFromString(url)
+	if err != nil {
+		return err
+	}
+
+	ret, _, err := procShellExecuteW.Call(
+		0,
+		uintptr(unsafe.Pointer(verb)),
+		uintptr(unsafe.Pointer(urlPtr)),
+		0,
+		0,
+		uintptr(1), // SW_SHOWNORMAL
+	)
+	if ret <= 32 {
+		return fmt.Errorf("ShellExecuteW failed: %w (ret code %d)", err, ret)
+	}
+
+	return nil
+}

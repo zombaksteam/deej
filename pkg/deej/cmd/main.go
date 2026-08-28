@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"strings"
 
 	"github.com/omriharel/deej/pkg/deej"
 )
@@ -48,16 +49,23 @@ func main() {
 		named.Fatalw("Failed to create deej object", "error", err)
 	}
 
-	// if injected by build process, set version info to show up in the tray
-	if buildType != "" && (versionTag != "" || gitCommit != "") {
-		identifier := gitCommit
-		if versionTag != "" {
-			identifier = versionTag
+	// set version info to show up in the tray
+	versionString := fmt.Sprintf("Version %s", deej.Version)
+	if versionTag != "" {
+		v := strings.TrimPrefix(versionTag, "v")
+		if buildType == "dev" {
+			versionString = fmt.Sprintf("Version %s (dev)", v)
+		} else {
+			versionString = fmt.Sprintf("Version %s", v)
 		}
-
-		versionString := fmt.Sprintf("Version %s-%s", buildType, identifier)
-		d.SetVersion(versionString)
+	} else if gitCommit != "" {
+		if buildType == "dev" {
+			versionString = fmt.Sprintf("Version %s-%s (dev)", deej.Version, gitCommit)
+		} else {
+			versionString = fmt.Sprintf("Version %s-%s", deej.Version, gitCommit)
+		}
 	}
+	d.SetVersion(versionString)
 
 	// onwards, to glory
 	if err = d.Initialize(); err != nil {
