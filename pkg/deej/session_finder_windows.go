@@ -24,6 +24,11 @@ type wcaSessionFinder struct {
 	mmNotificationClient    *wca.IMMNotificationClient
 	lastDefaultDeviceChange time.Time
 
+	// needed for session creation notifications
+	sessionNotification     *wca.IAudioSessionNotification
+	sessionNotificationVtbl *wca.IAudioSessionNotificationVtbl
+	sessionEventsChannel    chan struct{}
+
 	// our master input and output sessions
 	masterOut *masterSession
 	masterIn  *masterSession
@@ -44,9 +49,10 @@ const (
 
 func newSessionFinder(logger *zap.SugaredLogger) (SessionFinder, error) {
 	sf := &wcaSessionFinder{
-		logger:        logger.Named("session_finder"),
-		sessionLogger: logger.Named("sessions"),
-		eventCtx:      ole.NewGUID(myteriousGUID),
+		logger:               logger.Named("session_finder"),
+		sessionLogger:        logger.Named("sessions"),
+		eventCtx:             ole.NewGUID(myteriousGUID),
+		sessionEventsChannel: make(chan struct{}, 10),
 	}
 
 	sf.logger.Debug("Created WCA session finder instance")
@@ -395,6 +401,11 @@ func (sf *wcaSessionFinder) enumerateAndAddProcessSessions(
 	}
 	defer audioSessionManager2.Release()
 
+	// register session notification so we are alerted as soon as a new audio session spawns
+	if err := sf.registerSessionNotification(audioSessionManager2); err != nil {
+		sf.logger.Debugw("Failed to register session notification for audio output device", "error", err)
+	}
+
 	// get its IAudioSessionEnumerator
 	var sessionEnumerator *wca.IAudioSessionEnumerator
 
@@ -534,8 +545,52 @@ func (sf *wcaSessionFinder) defaultDeviceChangedCallback(
 		sf.masterIn.markAsStale()
 	}
 
+	sf.notifySessionEvent()
+
 	return
 }
+
+func (sf *wcaSessionFinder) registerSessionNotification(manager *wca.IAudioSessionManager2) error {
+	if sf.sessionNotification == nil {
+		sf.sessionNotificationVtbl = &wca.IAudioSessionNotificationVtbl{
+			QueryInterface:   syscall.NewCallback(sf.noopCallback),
+			AddRef:           syscall.NewCallback(sf.noopCallback),
+			Release:          syscall.NewCallback(sf.noopCallback),
+			OnSessionCreated: syscall.NewCallback(sf.sessionCreatedCallback),
+		}
+		sf.sessionNotification = &wca.IAudioSessionNotification{
+			VTable: (*wca.IAudioSessionEventsVtbl)(unsafe.Pointer(sf.sessionNotificationVtbl)),
+		}
+	}
+
+	if err := manager.RegisterSessionNotification(sf.sessionNotification); err != nil {
+		return fmt.Errorf("register session notification: %w", err)
+	}
+
+	return nil
+}
+
+func (sf *wcaSessionFinder) sessionCreatedCallback(
+	this *wca.IAudioSessionNotification,
+	newSession *wca.IAudioSessionControl,
+) (hResult uintptr) {
+	sf.logger.Debug("New audio session created notification received")
+	sf.notifySessionEvent()
+	return 0
+}
+
+func (sf *wcaSessionFinder) notifySessionEvent() {
+	select {
+	case sf.sessionEventsChannel <- struct{}{}:
+	default:
+	}
+}
+
+// SubscribeToSessionEvents returns a channel that receives signals when sessions are created or modified
+func (sf *wcaSessionFinder) SubscribeToSessionEvents() <-chan struct{} {
+	return sf.sessionEventsChannel
+}
+
 func (sf *wcaSessionFinder) noopCallback() (hResult uintptr) {
 	return
 }

@@ -48,16 +48,12 @@ func main() {
 		named.Fatalw("Failed to create deej object", "error", err)
 	}
 
-	// if injected by build process, set version info to show up in the tray
-	if buildType != "" && (versionTag != "" || gitCommit != "") {
-		identifier := gitCommit
-		if versionTag != "" {
-			identifier = versionTag
-		}
-
-		versionString := fmt.Sprintf("Version %s-%s", buildType, identifier)
-		d.SetVersion(versionString)
+	// set version info to show up in the tray
+	versionString := fmt.Sprintf("Version %s", deej.Version)
+	if buildType == "dev" {
+		versionString = fmt.Sprintf("Version %s (dev)", deej.Version)
 	}
+	d.SetVersion(versionString)
 
 	// onwards, to glory
 	if err = d.Initialize(); err != nil {

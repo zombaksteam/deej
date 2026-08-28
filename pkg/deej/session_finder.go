@@ -6,3 +6,8 @@ type SessionFinder interface {
 
 	Release() error
 }
+
+// SessionEventsNotifier represents an entity that can notify when audio sessions change or are created
+type SessionEventsNotifier interface {
+	SubscribeToSessionEvents() <-chan struct{}
+}

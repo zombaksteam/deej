@@ -62,6 +62,10 @@ type sessionMap struct {
 
 	lastSessionRefresh time.Time
 	unmappedSessions   []Session
+
+	sliderValues     map[int]float32
+	sliderValuesLock *sync.RWMutex
+	stopChannel      chan struct{}
 }
 
 const (
@@ -82,7 +86,7 @@ const (
 	// this threshold constant assumes that re-acquiring all sessions is a kind of expensive operation,
 	// and needs to be limited in some manner. this value was previously user-configurable through a config
 	// key "process_refresh_frequency", but exposing this type of implementation detail seems wrong now
-	minTimeBetweenSessionRefreshes = time.Second * 5
+	minTimeBetweenSessionRefreshes = time.Second * 2
 
 	// determines whether the map should be refreshed when a slider moves.
 	// this is a bit greedy but allows us to ensure sessions are always re-acquired, which is
@@ -100,11 +104,14 @@ func newSessionMap(deej *Deej, logger *zap.SugaredLogger, sessionFinder SessionF
 	logger = logger.Named("sessions")
 
 	m := &sessionMap{
-		deej:          deej,
-		logger:        logger,
-		m:             make(map[string][]Session),
-		lock:          &sync.Mutex{},
-		sessionFinder: sessionFinder,
+		deej:             deej,
+		logger:           logger,
+		m:                make(map[string][]Session),
+		lock:             &sync.Mutex{},
+		sessionFinder:    sessionFinder,
+		sliderValues:     make(map[int]float32),
+		sliderValuesLock: &sync.RWMutex{},
+		stopChannel:      make(chan struct{}),
 	}
 
 	logger.Debug("Created session map instance")
@@ -120,11 +127,14 @@ func (m *sessionMap) initialize() error {
 
 	m.setupOnConfigReload()
 	m.setupOnSliderMove()
+	m.setupSessionWatcher()
 
 	return nil
 }
 
 func (m *sessionMap) release() error {
+	close(m.stopChannel)
+
 	if err := m.sessionFinder.Release(); err != nil {
 		m.logger.Warnw("Failed to release session finder during session map release", "error", err)
 		return fmt.Errorf("release session finder during release: %w", err)
@@ -153,11 +163,38 @@ func (m *sessionMap) getAndAddSessions() error {
 			m.logger.Debugw("Tracking unmapped session", "session", session)
 			m.unmappedSessions = append(m.unmappedSessions, session)
 		}
+
+		// check if this session should have its volume initialized from a stored slider value
+		m.applyStoredSliderVolume(session)
 	}
 
 	m.logger.Infow("Got all audio sessions successfully", "sessionMap", m)
 
 	return nil
+}
+
+func (m *sessionMap) setupSessionWatcher() {
+	go func() {
+		var eventChan <-chan struct{}
+		if notifier, ok := m.sessionFinder.(SessionEventsNotifier); ok {
+			eventChan = notifier.SubscribeToSessionEvents()
+		}
+
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-m.stopChannel:
+				return
+			case <-eventChan:
+				m.logger.Debug("Audio session event detected, refreshing sessions")
+				m.refreshSessions(false)
+			case <-ticker.C:
+				m.refreshSessions(false)
+			}
+		}
+	}()
 }
 
 func (m *sessionMap) setupOnConfigReload() {
@@ -260,6 +297,10 @@ func (m *sessionMap) sessionMapped(session Session) bool {
 }
 
 func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
+	// record the last known slider value in memory
+	m.sliderValuesLock.Lock()
+	m.sliderValues[event.SliderID] = event.PercentValue
+	m.sliderValuesLock.Unlock()
 
 	// first of all, ensure our session map isn't moldy
 	if m.lastSessionRefresh.Add(maxTimeBetweenSessionRefreshes).Before(time.Now()) {
@@ -453,4 +494,128 @@ func (m *sessionMap) String() string {
 	}
 
 	return fmt.Sprintf("<%d audio sessions>", sessionCount)
+}
+
+// findSliderForSession determines which slider index (if any) controls the given session
+func (m *sessionMap) findSliderForSession(session Session) (int, bool) {
+	var foundSlider int
+	var found bool
+
+	// 1. Direct process name, path, device, master, mic, system targets
+	m.deej.config.SliderMapping.iterate(func(sliderIdx int, targets []string) {
+		if found {
+			return
+		}
+
+		for _, target := range targets {
+			if m.targetHasSpecialTransform(target) {
+				continue
+			}
+
+			resolvedTargets := m.resolveTarget(target)
+			for _, resolvedTarget := range resolvedTargets {
+				if isPathTarget(resolvedTarget) {
+					if session.Path() != "" && matchPathTarget(session.Path(), resolvedTarget) {
+						foundSlider = sliderIdx
+						found = true
+						return
+					}
+				} else {
+					if strings.EqualFold(resolvedTarget, session.Key()) {
+						foundSlider = sliderIdx
+						found = true
+						return
+					}
+				}
+			}
+		}
+	})
+
+	if found {
+		return foundSlider, true
+	}
+
+	// 2. Check special transform: deej.current (active foreground window)
+	m.deej.config.SliderMapping.iterate(func(sliderIdx int, targets []string) {
+		if found {
+			return
+		}
+		for _, target := range targets {
+			if strings.EqualFold(target, specialTargetTransformPrefix+specialTargetCurrentWindow) {
+				resolvedTargets := m.applyTargetTransform(specialTargetCurrentWindow)
+				for _, resolved := range resolvedTargets {
+					if strings.EqualFold(resolved, session.Key()) {
+						foundSlider = sliderIdx
+						found = true
+						return
+					}
+				}
+			}
+		}
+	})
+
+	if found {
+		return foundSlider, true
+	}
+
+	// 3. Check special transform: deej.unmapped
+	if !m.sessionMapped(session) {
+		m.deej.config.SliderMapping.iterate(func(sliderIdx int, targets []string) {
+			if found {
+				return
+			}
+			for _, target := range targets {
+				if strings.EqualFold(target, specialTargetTransformPrefix+specialTargetAllUnmapped) {
+					foundSlider = sliderIdx
+					found = true
+					return
+				}
+			}
+		})
+	}
+
+	return foundSlider, found
+}
+
+// applyStoredSliderVolume applies the stored in-memory slider percentage to the session
+func (m *sessionMap) applyStoredSliderVolume(session Session) {
+	sliderIdx, ok := m.findSliderForSession(session)
+	if !ok {
+		return
+	}
+
+	m.sliderValuesLock.RLock()
+	volume, hasVolume := m.sliderValues[sliderIdx]
+	m.sliderValuesLock.RUnlock()
+
+	if !hasVolume {
+		return
+	}
+
+	if session.GetVolume() != volume {
+		if m.logger != nil {
+			m.logger.Debugw("Applying stored slider volume to session",
+				"session", session.Key(),
+				"slider", sliderIdx,
+				"volume", volume)
+		}
+
+		if err := session.SetVolume(volume); err != nil {
+			if m.logger != nil {
+				m.logger.Warnw("Failed to apply stored slider volume to session",
+					"session", session.Key(),
+					"slider", sliderIdx,
+					"error", err)
+			}
+		}
+	}
+}
+
+// getSliderValue returns the stored volume for a given slider index, if known
+func (m *sessionMap) getSliderValue(sliderIdx int) (float32, bool) {
+	m.sliderValuesLock.RLock()
+	defer m.sliderValuesLock.RUnlock()
+
+	val, ok := m.sliderValues[sliderIdx]
+	return val, ok
 }

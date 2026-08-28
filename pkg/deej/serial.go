@@ -12,8 +12,6 @@ import (
 
 	"github.com/jacobsa/go-serial/serial"
 	"go.uber.org/zap"
-
-	"github.com/omriharel/deej/pkg/deej/util"
 )
 
 // SerialIO provides a deej-aware abstraction layer to managing serial I/O
@@ -74,13 +72,8 @@ func (sio *SerialIO) Start() error {
 		return errors.New("serial: connection already active")
 	}
 
-	// set minimum read size according to platform (0 for windows, 1 for linux)
-	// this prevents a rare bug on windows where serial reads get congested,
-	// resulting in significant lag
-	minimumReadSize := 0
-	if util.Linux() {
-		minimumReadSize = 1
-	}
+	// set minimum read size to 1 byte for blocking reads
+	minimumReadSize := 1
 
 	sio.connOptions = serial.OpenOptions{
 		PortName:              sio.deej.config.ConnectionInfo.COMPort,
@@ -88,7 +81,7 @@ func (sio *SerialIO) Start() error {
 		DataBits:              8,
 		StopBits:              1,
 		MinimumReadSize:       uint(minimumReadSize),
-		InterCharacterTimeout: 100, // prevents blocking reads from hanging the serial thread during desyncs
+		InterCharacterTimeout: 0,
 	}
 
 	sio.logger.Debugw("Attempting serial connection",
@@ -215,8 +208,12 @@ func (sio *SerialIO) readLine(logger *zap.SugaredLogger, reader *bufio.Reader) c
 					logger.Warnw("Failed to read line from serial", "error", err, "line", line)
 				}
 
-				// just ignore the line, the read loop will stop after this
-				return
+				if !sio.connected {
+					return
+				}
+
+				time.Sleep(100 * time.Millisecond)
+				continue
 			}
 
 			if sio.deej.Verbose() {

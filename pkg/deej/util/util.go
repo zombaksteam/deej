@@ -75,6 +75,19 @@ func OpenExternal(logger *zap.SugaredLogger, cmd string, arg string) error {
 	return nil
 }
 
+// OpenURL opens the given URL in the user's default web browser
+func OpenURL(logger *zap.SugaredLogger, url string) error {
+	if err := openURLPlatform(url); err != nil {
+		logger.Warnw("Failed to open URL in default browser",
+			"url", url,
+			"error", err)
+
+		return fmt.Errorf("open URL in browser: %w", err)
+	}
+
+	return nil
+}
+
 // NormalizeScalar "trims" the given float32 to 2 points of precision (e.g. 0.15442 -> 0.15)
 // This is used both for windows core audio volume levels and for cleaning up slider level values from serial
 func NormalizeScalar(v float32) float32 {
