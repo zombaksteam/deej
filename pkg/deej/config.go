@@ -16,10 +16,11 @@ import (
 // CanonicalConfig provides application-wide access to configuration fields,
 // as well as loading/file watching logic for deej's configuration file
 type CanonicalConfig struct {
-	SliderMapping       *sliderMap
-	MasterMapping       int
-	MasterVolumePercent int
-	StreamPCMode        bool
+	SliderMapping           *sliderMap
+	MasterMapping           int
+	MasterVolumePercent     int
+	EnableStreamPCSwitching bool
+	StreamPCMode            bool
 
 	ConnectionInfo struct {
 		COMPort  string
@@ -51,23 +52,26 @@ const (
 
 	configType = "yaml"
 
-	configKeySliderMapping          = "slider_mapping"
-	configKeyMasterMapping          = "master_mapping"
-	configKeyMasterVolumePercent    = "master_volume_persent"
-	configKeyMasterVolumePercentAlt = "master_volume_percent"
-	configKeyStreamPCMode           = "stream_pc_mode"
-	configKeyInvertSliders          = "invert_sliders"
-	configKeyCOMPort                = "com_port"
-	configKeyBaudRate               = "baud_rate"
-	configKeyNoiseReductionLevel    = "noise_reduction"
+	configKeySliderMapping             = "slider_mapping"
+	configKeyMasterMapping             = "master_mapping"
+	configKeyMasterVolumePercent       = "master_volume_persent"
+	configKeyMasterVolumePercentAlt    = "master_volume_percent"
+	configKeyEnableStreamPCSwitching   = "enable_stream_pc_switching"
+	configKeyStreamPCMode              = "stream_pc_mode"
+	configKeyInvertSliders             = "invert_sliders"
+	configKeyCOMPort                   = "com_port"
+	configKeyBaudRate                  = "baud_rate"
+	configKeyNoiseReductionLevel       = "noise_reduction"
 
-	defaultCOMPort             = "COM4"
-	defaultBaudRate            = 9600
-	defaultMasterMapping       = 0
-	defaultMasterVolumePercent = 90
+	defaultCOMPort                   = "COM4"
+	defaultBaudRate                  = 9600
+	defaultMasterMapping             = 0
+	defaultMasterVolumePercent       = 90
+	defaultEnableStreamPCSwitching   = false
 )
 
 var internalConfigPath = "."
+
 
 
 
@@ -98,6 +102,7 @@ func NewConfig(logger *zap.SugaredLogger, notifier Notifier) (*CanonicalConfig, 
 	userConfig.SetDefault(configKeySliderMapping, map[string][]string{})
 	userConfig.SetDefault(configKeyMasterMapping, defaultMasterMapping)
 	userConfig.SetDefault(configKeyMasterVolumePercent, defaultMasterVolumePercent)
+	userConfig.SetDefault(configKeyEnableStreamPCSwitching, defaultEnableStreamPCSwitching)
 	userConfig.SetDefault(configKeyInvertSliders, false)
 	userConfig.SetDefault(configKeyCOMPort, defaultCOMPort)
 	userConfig.SetDefault(configKeyBaudRate, defaultBaudRate)
@@ -162,13 +167,14 @@ func (cc *CanonicalConfig) Load() error {
 		"sliderMapping", cc.SliderMapping,
 		"masterMapping", cc.MasterMapping,
 		"masterVolumePercent", cc.MasterVolumePercent,
+		"enableStreamPCSwitching", cc.EnableStreamPCSwitching,
 		"streamPCMode", cc.StreamPCMode,
 		"connectionInfo", cc.ConnectionInfo,
 		"invertSliders", cc.InvertSliders)
 
-
 	return nil
 }
+
 
 // SubscribeToChanges allows external components to receive updates when the config is reloaded
 func (cc *CanonicalConfig) SubscribeToChanges() chan bool {
@@ -236,6 +242,10 @@ func (cc *CanonicalConfig) StopWatchingConfigFile() {
 
 // SavePreferences persists internal preferences such as stream_pc_mode to preferences.yaml
 func (cc *CanonicalConfig) SavePreferences() error {
+	if !cc.EnableStreamPCSwitching {
+		return nil
+	}
+
 	cc.internalConfig.Set(configKeyStreamPCMode, cc.StreamPCMode)
 
 	if util.FileExists(internalConfigFilepath) {
@@ -277,13 +287,21 @@ func (cc *CanonicalConfig) populateFromVipers() error {
 		cc.MasterVolumePercent = defaultMasterVolumePercent
 	}
 
-	if cc.internalConfig.IsSet(configKeyStreamPCMode) {
-		cc.StreamPCMode = cc.internalConfig.GetBool(configKeyStreamPCMode)
-	} else if cc.userConfig.IsSet(configKeyStreamPCMode) {
-		cc.StreamPCMode = cc.userConfig.GetBool(configKeyStreamPCMode)
+	cc.EnableStreamPCSwitching = cc.userConfig.GetBool(configKeyEnableStreamPCSwitching)
+
+	if cc.EnableStreamPCSwitching {
+		if cc.internalConfig.IsSet(configKeyStreamPCMode) {
+			cc.StreamPCMode = cc.internalConfig.GetBool(configKeyStreamPCMode)
+		} else if cc.userConfig.IsSet(configKeyStreamPCMode) {
+			cc.StreamPCMode = cc.userConfig.GetBool(configKeyStreamPCMode)
+		} else {
+			cc.StreamPCMode = false
+		}
 	} else {
+		// When switching is disabled, ignore preferences.yaml and force false
 		cc.StreamPCMode = false
 	}
+
 
 
 	// get the rest of the config fields - viper saves us a lot of effort here

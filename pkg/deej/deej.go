@@ -133,6 +133,11 @@ func (d *Deej) Verbose() bool {
 
 // SetStreamPCMode enables or disables Stream PC Mode and applies corresponding audio adjustments
 func (d *Deej) SetStreamPCMode(enabled bool) error {
+	if !d.config.EnableStreamPCSwitching {
+		d.logger.Debug("Ignoring SetStreamPCMode because enable_stream_pc_switching is false")
+		return nil
+	}
+
 	d.config.StreamPCMode = enabled
 	if err := d.config.SavePreferences(); err != nil {
 		d.logger.Warnw("Failed to save Stream PC Mode preference", "error", err)
@@ -150,6 +155,7 @@ func (d *Deej) SetStreamPCMode(enabled bool) error {
 	d.sessions.onStreamPCModeChanged(enabled)
 	return nil
 }
+
 
 
 func (d *Deej) setupInterruptHandler() {

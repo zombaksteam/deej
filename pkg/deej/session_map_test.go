@@ -454,12 +454,14 @@ func TestConfig_MasterMappingAndPreferences(t *testing.T) {
 	userCfgPath := filepath.Join(tmpDir, "config.yaml")
 	prefCfgPath := filepath.Join(tmpDir, "preferences.yaml")
 
+	// 1. First test: enable_stream_pc_switching is false (default), preferences has stream_pc_mode: true
 	userCfgContent := `
 slider_mapping:
   2: discord.exe
   3: chrome.exe
 master_mapping: 3
 master_volume_persent: 90
+enable_stream_pc_switching: false
 `
 	if err := os.WriteFile(userCfgPath, []byte(userCfgContent), 0644); err != nil {
 		t.Fatalf("Failed to write test config.yaml: %v", err)
@@ -502,8 +504,23 @@ stream_pc_mode: true
 		t.Errorf("cfg.MasterVolumePercent = %d; want 90", cfg.MasterVolumePercent)
 	}
 
+	if cfg.EnableStreamPCSwitching != false {
+		t.Errorf("cfg.EnableStreamPCSwitching = %v; want false", cfg.EnableStreamPCSwitching)
+	}
+
+	// Must be false because enable_stream_pc_switching is false, ignoring preferences.yaml
+	if cfg.StreamPCMode != false {
+		t.Errorf("cfg.StreamPCMode = %v; want false (should ignore preferences when switching is disabled)", cfg.StreamPCMode)
+	}
+
+	// 2. Second test: enable_stream_pc_switching is true
+	uViper.Set("enable_stream_pc_switching", true)
+	if err := cfg.populateFromVipers(); err != nil {
+		t.Fatalf("populateFromVipers: %v", err)
+	}
+
 	if !cfg.StreamPCMode {
-		t.Errorf("cfg.StreamPCMode = %v; want true", cfg.StreamPCMode)
+		t.Errorf("cfg.StreamPCMode = %v; want true when enable_stream_pc_switching is true", cfg.StreamPCMode)
 	}
 
 	// Test updating preference
@@ -523,6 +540,7 @@ stream_pc_mode: true
 		t.Errorf("saved stream_pc_mode = %v; want false", iViper2.GetBool("stream_pc_mode"))
 	}
 }
+
 
 
 

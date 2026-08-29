@@ -29,10 +29,14 @@ func (d *Deej) initializeTray(onDone func()) {
 		systray.AddSeparator()
 
 		streamPCModeItem := systray.AddMenuItem("Stream PC Mode", "Lock master volume to single slider and set mapped apps to 100%")
-		if d.config.StreamPCMode {
-			streamPCModeItem.Check()
+		if d.config.EnableStreamPCSwitching {
+			if d.config.StreamPCMode {
+				streamPCModeItem.Check()
+			} else {
+				streamPCModeItem.Uncheck()
+			}
 		} else {
-			streamPCModeItem.Uncheck()
+			streamPCModeItem.Hide()
 		}
 
 		editConfig := systray.AddMenuItem("Edit configuration", "Open config file with notepad")
@@ -61,6 +65,9 @@ func (d *Deej) initializeTray(onDone func()) {
 
 				// stream pc mode toggle
 				case <-streamPCModeItem.ClickedCh:
+					if !d.config.EnableStreamPCSwitching {
+						continue
+					}
 					newVal := !d.config.StreamPCMode
 					logger.Infow("Stream PC Mode menu item clicked", "newVal", newVal)
 
@@ -76,11 +83,17 @@ func (d *Deej) initializeTray(onDone func()) {
 
 				// config reloaded externally
 				case <-configReloadedCh:
-					if d.config.StreamPCMode {
-						streamPCModeItem.Check()
+					if d.config.EnableStreamPCSwitching {
+						streamPCModeItem.Show()
+						if d.config.StreamPCMode {
+							streamPCModeItem.Check()
+						} else {
+							streamPCModeItem.Uncheck()
+						}
 					} else {
-						streamPCModeItem.Uncheck()
+						streamPCModeItem.Hide()
 					}
+
 
 				// quit
 				case <-quit.ClickedCh:
