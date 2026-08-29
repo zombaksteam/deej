@@ -130,6 +130,27 @@ func (d *Deej) Verbose() bool {
 	return d.verbose
 }
 
+// SetStreamPCMode enables or disables Stream PC Mode and applies corresponding audio adjustments
+func (d *Deej) SetStreamPCMode(enabled bool) error {
+	d.config.StreamPCMode = enabled
+	if err := d.config.SavePreferences(); err != nil {
+		d.logger.Warnw("Failed to save Stream PC Mode preference", "error", err)
+	}
+
+	if enabled {
+		d.logger.Infow("Stream PC Mode enabled", "masterSlider", d.config.MasterMapping)
+		d.notifier.Notify("Stream PC Mode enabled",
+			fmt.Sprintf("Slider %d is mapped to Master. Mapped app volumes set to 100%%.", d.config.MasterMapping))
+	} else {
+		d.logger.Info("Stream PC Mode disabled")
+		d.notifier.Notify("Stream PC Mode disabled", "Standard slider mapping restored.")
+	}
+
+	d.sessions.onStreamPCModeChanged(enabled)
+	return nil
+}
+
+
 func (d *Deej) setupInterruptHandler() {
 	interruptChannel := util.SetupCloseHandler()
 

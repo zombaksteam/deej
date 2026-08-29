@@ -17,6 +17,8 @@ type Session interface {
 
 	Key() string
 	Path() string
+	Master() bool
+	System() bool
 	Release()
 }
 
@@ -58,3 +60,12 @@ func (s *baseSession) Key() string {
 func (s *baseSession) Path() string {
 	return strings.ToLower(s.path)
 }
+
+func (s *baseSession) Master() bool {
+	return s.master
+}
+
+func (s *baseSession) System() bool {
+	return s.system
+}
+

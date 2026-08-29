@@ -28,6 +28,13 @@ func (d *Deej) initializeTray(onDone func()) {
 
 		systray.AddSeparator()
 
+		streamPCModeItem := systray.AddMenuItem("Stream PC Mode", "Lock master volume to single slider and set mapped apps to 100%")
+		if d.config.StreamPCMode {
+			streamPCModeItem.Check()
+		} else {
+			streamPCModeItem.Uncheck()
+		}
+
 		editConfig := systray.AddMenuItem("Edit configuration", "Open config file with notepad")
 		editConfig.SetIcon(icon.EditConfig)
 
@@ -36,6 +43,8 @@ func (d *Deej) initializeTray(onDone func()) {
 
 		systray.AddSeparator()
 		quit := systray.AddMenuItem("Quit", "Stop deej and quit")
+
+		configReloadedCh := d.config.SubscribeToChanges()
 
 		// wait on things to happen
 		go func() {
@@ -48,6 +57,29 @@ func (d *Deej) initializeTray(onDone func()) {
 
 					if err := util.OpenURL(logger, RepoURL); err != nil {
 						logger.Warnw("Failed to open repository URL", "error", err)
+					}
+
+				// stream pc mode toggle
+				case <-streamPCModeItem.ClickedCh:
+					newVal := !d.config.StreamPCMode
+					logger.Infow("Stream PC Mode menu item clicked", "newVal", newVal)
+
+					if newVal {
+						streamPCModeItem.Check()
+					} else {
+						streamPCModeItem.Uncheck()
+					}
+
+					if err := d.SetStreamPCMode(newVal); err != nil {
+						logger.Warnw("Failed to update Stream PC Mode", "error", err)
+					}
+
+				// config reloaded externally
+				case <-configReloadedCh:
+					if d.config.StreamPCMode {
+						streamPCModeItem.Check()
+					} else {
+						streamPCModeItem.Uncheck()
 					}
 
 				// quit
@@ -79,6 +111,7 @@ func (d *Deej) initializeTray(onDone func()) {
 				}
 			}
 		}()
+
 
 		// actually start the main runtime
 		onDone()

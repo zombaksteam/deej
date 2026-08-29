@@ -2,7 +2,6 @@ package deej
 
 import (
 	"fmt"
-	"path"
 	"strings"
 	"time"
 
@@ -13,10 +12,13 @@ import (
 	"github.com/omriharel/deej/pkg/deej/util"
 )
 
+
 // CanonicalConfig provides application-wide access to configuration fields,
 // as well as loading/file watching logic for deej's configuration file
 type CanonicalConfig struct {
 	SliderMapping *sliderMap
+	MasterMapping int
+	StreamPCMode  bool
 
 	ConnectionInfo struct {
 		COMPort  string
@@ -49,17 +51,20 @@ const (
 	configType = "yaml"
 
 	configKeySliderMapping       = "slider_mapping"
+	configKeyMasterMapping       = "master_mapping"
+	configKeyStreamPCMode        = "stream_pc_mode"
 	configKeyInvertSliders       = "invert_sliders"
 	configKeyCOMPort             = "com_port"
 	configKeyBaudRate            = "baud_rate"
 	configKeyNoiseReductionLevel = "noise_reduction"
 
-	defaultCOMPort  = "COM4"
-	defaultBaudRate = 9600
+	defaultCOMPort       = "COM4"
+	defaultBaudRate      = 9600
+	defaultMasterMapping = 0
 )
 
-// has to be defined as a non-constant because we're using path.Join
-var internalConfigPath = path.Join(".", logDirectory)
+var internalConfigPath = "."
+
 
 var defaultSliderMapping = func() *sliderMap {
 	emptyMap := newSliderMap()
@@ -86,6 +91,7 @@ func NewConfig(logger *zap.SugaredLogger, notifier Notifier) (*CanonicalConfig, 
 	userConfig.AddConfigPath(userConfigPath)
 
 	userConfig.SetDefault(configKeySliderMapping, map[string][]string{})
+	userConfig.SetDefault(configKeyMasterMapping, defaultMasterMapping)
 	userConfig.SetDefault(configKeyInvertSliders, false)
 	userConfig.SetDefault(configKeyCOMPort, defaultCOMPort)
 	userConfig.SetDefault(configKeyBaudRate, defaultBaudRate)
@@ -94,6 +100,9 @@ func NewConfig(logger *zap.SugaredLogger, notifier Notifier) (*CanonicalConfig, 
 	internalConfig.SetConfigName(internalConfigName)
 	internalConfig.SetConfigType(configType)
 	internalConfig.AddConfigPath(internalConfigPath)
+	internalConfig.SetConfigFile(internalConfigFilepath)
+
+	internalConfig.SetDefault(configKeyStreamPCMode, false)
 
 	cc.userConfig = userConfig
 	cc.internalConfig = internalConfig
@@ -145,6 +154,8 @@ func (cc *CanonicalConfig) Load() error {
 	cc.logger.Info("Loaded config successfully")
 	cc.logger.Infow("Config values",
 		"sliderMapping", cc.SliderMapping,
+		"masterMapping", cc.MasterMapping,
+		"streamPCMode", cc.StreamPCMode,
 		"connectionInfo", cc.ConnectionInfo,
 		"invertSliders", cc.InvertSliders)
 
@@ -215,6 +226,27 @@ func (cc *CanonicalConfig) StopWatchingConfigFile() {
 	cc.stopWatcherChannel <- true
 }
 
+// SavePreferences persists internal preferences such as stream_pc_mode to preferences.yaml
+func (cc *CanonicalConfig) SavePreferences() error {
+	cc.internalConfig.Set(configKeyStreamPCMode, cc.StreamPCMode)
+
+	if util.FileExists(internalConfigFilepath) {
+		if err := cc.internalConfig.WriteConfig(); err != nil {
+			cc.logger.Warnw("Failed to write internal config", "error", err)
+			return err
+		}
+		cc.logger.Debug("Saved internal config successfully")
+		return nil
+	}
+
+	if err := cc.internalConfig.WriteConfigAs(internalConfigFilepath); err != nil {
+		cc.logger.Warnw("Failed to create and write internal config", "error", err)
+		return err
+	}
+	cc.logger.Debug("Created and saved internal config successfully")
+	return nil
+}
+
 func (cc *CanonicalConfig) populateFromVipers() error {
 
 	// merge the slider mappings from the user and internal configs
@@ -222,6 +254,20 @@ func (cc *CanonicalConfig) populateFromVipers() error {
 		cc.userConfig.GetStringMapStringSlice(configKeySliderMapping),
 		cc.internalConfig.GetStringMapStringSlice(configKeySliderMapping),
 	)
+
+	if cc.userConfig.IsSet(configKeyMasterMapping) {
+		cc.MasterMapping = cc.userConfig.GetInt(configKeyMasterMapping)
+	} else {
+		cc.MasterMapping = defaultMasterMapping
+	}
+
+	if cc.internalConfig.IsSet(configKeyStreamPCMode) {
+		cc.StreamPCMode = cc.internalConfig.GetBool(configKeyStreamPCMode)
+	} else if cc.userConfig.IsSet(configKeyStreamPCMode) {
+		cc.StreamPCMode = cc.userConfig.GetBool(configKeyStreamPCMode)
+	} else {
+		cc.StreamPCMode = false
+	}
 
 	// get the rest of the config fields - viper saves us a lot of effort here
 	cc.ConnectionInfo.COMPort = cc.userConfig.GetString(configKeyCOMPort)
@@ -251,3 +297,4 @@ func (cc *CanonicalConfig) onConfigReloaded() {
 		consumer <- true
 	}
 }
+
