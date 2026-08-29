@@ -16,9 +16,10 @@ import (
 // CanonicalConfig provides application-wide access to configuration fields,
 // as well as loading/file watching logic for deej's configuration file
 type CanonicalConfig struct {
-	SliderMapping *sliderMap
-	MasterMapping int
-	StreamPCMode  bool
+	SliderMapping       *sliderMap
+	MasterMapping       int
+	MasterVolumePercent int
+	StreamPCMode        bool
 
 	ConnectionInfo struct {
 		COMPort  string
@@ -50,20 +51,24 @@ const (
 
 	configType = "yaml"
 
-	configKeySliderMapping       = "slider_mapping"
-	configKeyMasterMapping       = "master_mapping"
-	configKeyStreamPCMode        = "stream_pc_mode"
-	configKeyInvertSliders       = "invert_sliders"
-	configKeyCOMPort             = "com_port"
-	configKeyBaudRate            = "baud_rate"
-	configKeyNoiseReductionLevel = "noise_reduction"
+	configKeySliderMapping          = "slider_mapping"
+	configKeyMasterMapping          = "master_mapping"
+	configKeyMasterVolumePercent    = "master_volume_persent"
+	configKeyMasterVolumePercentAlt = "master_volume_percent"
+	configKeyStreamPCMode           = "stream_pc_mode"
+	configKeyInvertSliders          = "invert_sliders"
+	configKeyCOMPort                = "com_port"
+	configKeyBaudRate               = "baud_rate"
+	configKeyNoiseReductionLevel    = "noise_reduction"
 
-	defaultCOMPort       = "COM4"
-	defaultBaudRate      = 9600
-	defaultMasterMapping = 0
+	defaultCOMPort             = "COM4"
+	defaultBaudRate            = 9600
+	defaultMasterMapping       = 0
+	defaultMasterVolumePercent = 90
 )
 
 var internalConfigPath = "."
+
 
 
 var defaultSliderMapping = func() *sliderMap {
@@ -92,6 +97,7 @@ func NewConfig(logger *zap.SugaredLogger, notifier Notifier) (*CanonicalConfig, 
 
 	userConfig.SetDefault(configKeySliderMapping, map[string][]string{})
 	userConfig.SetDefault(configKeyMasterMapping, defaultMasterMapping)
+	userConfig.SetDefault(configKeyMasterVolumePercent, defaultMasterVolumePercent)
 	userConfig.SetDefault(configKeyInvertSliders, false)
 	userConfig.SetDefault(configKeyCOMPort, defaultCOMPort)
 	userConfig.SetDefault(configKeyBaudRate, defaultBaudRate)
@@ -155,9 +161,11 @@ func (cc *CanonicalConfig) Load() error {
 	cc.logger.Infow("Config values",
 		"sliderMapping", cc.SliderMapping,
 		"masterMapping", cc.MasterMapping,
+		"masterVolumePercent", cc.MasterVolumePercent,
 		"streamPCMode", cc.StreamPCMode,
 		"connectionInfo", cc.ConnectionInfo,
 		"invertSliders", cc.InvertSliders)
+
 
 	return nil
 }
@@ -261,6 +269,14 @@ func (cc *CanonicalConfig) populateFromVipers() error {
 		cc.MasterMapping = defaultMasterMapping
 	}
 
+	if cc.userConfig.IsSet(configKeyMasterVolumePercent) {
+		cc.MasterVolumePercent = cc.userConfig.GetInt(configKeyMasterVolumePercent)
+	} else if cc.userConfig.IsSet(configKeyMasterVolumePercentAlt) {
+		cc.MasterVolumePercent = cc.userConfig.GetInt(configKeyMasterVolumePercentAlt)
+	} else {
+		cc.MasterVolumePercent = defaultMasterVolumePercent
+	}
+
 	if cc.internalConfig.IsSet(configKeyStreamPCMode) {
 		cc.StreamPCMode = cc.internalConfig.GetBool(configKeyStreamPCMode)
 	} else if cc.userConfig.IsSet(configKeyStreamPCMode) {
@@ -268,6 +284,7 @@ func (cc *CanonicalConfig) populateFromVipers() error {
 	} else {
 		cc.StreamPCMode = false
 	}
+
 
 	// get the rest of the config fields - viper saves us a lot of effort here
 	cc.ConnectionInfo.COMPort = cc.userConfig.GetString(configKeyCOMPort)

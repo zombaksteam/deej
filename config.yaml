@@ -29,6 +29,9 @@ slider_mapping:
 # slider index that controls master volume when "Stream PC Mode" is active
 master_mapping: 3
 
+# master volume level percentage (0-100) to set when "Stream PC Mode" is turned off
+master_volume_persent: 90
+
 
 # set this to true if you want the controls inverted (i.e. top is 0%, bottom is 100%)
 invert_sliders: false

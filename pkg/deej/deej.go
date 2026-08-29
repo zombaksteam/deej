@@ -14,10 +14,11 @@ import (
 
 const (
 	// Version is the current release version of deej
-	Version = "0.9.12"
+	Version = "0.9.13"
 
 	// RepoURL is the GitHub repository URL for deej
 	RepoURL = "https://github.com/zombaksteam/deej"
+
 
 	// when this is set to anything, deej won't use a tray icon
 	envNoTray = "DEEJ_NO_TRAY_ICON"

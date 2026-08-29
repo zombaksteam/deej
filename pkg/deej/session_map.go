@@ -674,17 +674,33 @@ func (m *sessionMap) onStreamPCModeChanged(enabled bool) {
 		})
 	} else {
 		if m.logger != nil {
-			m.logger.Info("Stream PC Mode disabled: restoring standard slider mapping volumes")
+			m.logger.Info("Stream PC Mode disabled: restoring standard slider mapping volumes and setting master volume to configured percent")
 		}
 
-		// Restore all sessions according to their normal slider mappings
+		targetMasterVol := float32(m.deej.config.MasterVolumePercent) / 100.0
+		if targetMasterVol < 0.0 {
+			targetMasterVol = 0.0
+		} else if targetMasterVol > 1.0 {
+			targetMasterVol = 1.0
+		}
+
+		// Restore all sessions according to their normal slider mappings, and master to targetMasterVol
 		m.iterate(func(key string, sessions []Session) {
 			for _, session := range sessions {
-				m.applyStoredSliderVolume(session)
+				if session.Master() {
+					if err := session.SetVolume(targetMasterVol); err != nil {
+						if m.logger != nil {
+							m.logger.Warnw("Failed to set master volume on Stream PC Mode exit", "error", err)
+						}
+					}
+				} else {
+					m.applyStoredSliderVolume(session)
+				}
 			}
 		})
 	}
 }
+
 
 // applyStoredSliderVolume applies the stored in-memory slider percentage to the session
 func (m *sessionMap) applyStoredSliderVolume(session Session) {

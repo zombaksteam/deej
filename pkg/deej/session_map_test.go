@@ -401,17 +401,20 @@ func TestStreamPCMode_ToggleBackToNormal(t *testing.T) {
 	sm.set(2, []string{"discord.exe"})
 	sm.set(3, []string{"chrome.exe"})
 
+	masterSess := &mockSession{key: "master", master: true, volume: 1.0}
 	discordSess := &mockSession{key: "discord.exe", volume: 1.0}
 	chromeSess := &mockSession{key: "chrome.exe", volume: 1.0}
 
 	cfg := &CanonicalConfig{
-		SliderMapping: sm,
-		MasterMapping: 3,
-		StreamPCMode:  true,
+		SliderMapping:       sm,
+		MasterMapping:       3,
+		MasterVolumePercent: 90,
+		StreamPCMode:        true,
 	}
 
 	sessionMapInstance := &sessionMap{
 		m: map[string][]Session{
+			"master":      {masterSess},
 			"discord.exe": {discordSess},
 			"chrome.exe":  {chromeSess},
 		},
@@ -426,6 +429,11 @@ func TestStreamPCMode_ToggleBackToNormal(t *testing.T) {
 	// Turn off Stream PC Mode
 	cfg.StreamPCMode = false
 	sessionMapInstance.onStreamPCModeChanged(false)
+
+	// Master volume should be set to master_volume_persent (90% = 0.90)
+	if masterSess.GetVolume() != 0.90 {
+		t.Errorf("masterSess volume = %f; want 0.90 (from master_volume_persent)", masterSess.GetVolume())
+	}
 
 	// Volumes should be restored to their stored slider positions
 	if discordSess.GetVolume() != 0.40 {
@@ -451,6 +459,7 @@ slider_mapping:
   2: discord.exe
   3: chrome.exe
 master_mapping: 3
+master_volume_persent: 90
 `
 	if err := os.WriteFile(userCfgPath, []byte(userCfgContent), 0644); err != nil {
 		t.Fatalf("Failed to write test config.yaml: %v", err)
@@ -489,6 +498,10 @@ stream_pc_mode: true
 		t.Errorf("cfg.MasterMapping = %d; want 3", cfg.MasterMapping)
 	}
 
+	if cfg.MasterVolumePercent != 90 {
+		t.Errorf("cfg.MasterVolumePercent = %d; want 90", cfg.MasterVolumePercent)
+	}
+
 	if !cfg.StreamPCMode {
 		t.Errorf("cfg.StreamPCMode = %v; want true", cfg.StreamPCMode)
 	}
@@ -510,5 +523,6 @@ stream_pc_mode: true
 		t.Errorf("saved stream_pc_mode = %v; want false", iViper2.GetBool("stream_pc_mode"))
 	}
 }
+
 
 
