@@ -454,7 +454,6 @@ func TestConfig_MasterMappingAndPreferences(t *testing.T) {
 	userCfgPath := filepath.Join(tmpDir, "config.yaml")
 	prefCfgPath := filepath.Join(tmpDir, "preferences.yaml")
 
-	// 1. First test: enable_stream_pc_switching is false (default), preferences has stream_pc_mode: true
 	userCfgContent := `
 slider_mapping:
   2: discord.exe
@@ -462,6 +461,8 @@ slider_mapping:
 master_mapping: 3
 master_volume_persent: 90
 enable_stream_pc_switching: false
+stream_pc_output_device: "Speakers (Realtek USB Audio)"
+normal_output_device: "Headphones (Shure MVX2U)"
 `
 	if err := os.WriteFile(userCfgPath, []byte(userCfgContent), 0644); err != nil {
 		t.Fatalf("Failed to write test config.yaml: %v", err)
@@ -504,6 +505,14 @@ stream_pc_mode: true
 		t.Errorf("cfg.MasterVolumePercent = %d; want 90", cfg.MasterVolumePercent)
 	}
 
+	if cfg.StreamPCOutputDevice != "Speakers (Realtek USB Audio)" {
+		t.Errorf("cfg.StreamPCOutputDevice = %q; want 'Speakers (Realtek USB Audio)'", cfg.StreamPCOutputDevice)
+	}
+
+	if cfg.NormalOutputDevice != "Headphones (Shure MVX2U)" {
+		t.Errorf("cfg.NormalOutputDevice = %q; want 'Headphones (Shure MVX2U)'", cfg.NormalOutputDevice)
+	}
+
 	if cfg.EnableStreamPCSwitching != false {
 		t.Errorf("cfg.EnableStreamPCSwitching = %v; want false", cfg.EnableStreamPCSwitching)
 	}
@@ -512,6 +521,7 @@ stream_pc_mode: true
 	if cfg.StreamPCMode != false {
 		t.Errorf("cfg.StreamPCMode = %v; want false (should ignore preferences when switching is disabled)", cfg.StreamPCMode)
 	}
+
 
 	// 2. Second test: enable_stream_pc_switching is true
 	uViper.Set("enable_stream_pc_switching", true)
@@ -540,7 +550,5 @@ stream_pc_mode: true
 		t.Errorf("saved stream_pc_mode = %v; want false", iViper2.GetBool("stream_pc_mode"))
 	}
 }
-
-
 
 

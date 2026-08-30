@@ -21,6 +21,8 @@ type CanonicalConfig struct {
 	MasterVolumePercent     int
 	EnableStreamPCSwitching bool
 	StreamPCMode            bool
+	StreamPCOutputDevice    string
+	NormalOutputDevice      string
 
 	ConnectionInfo struct {
 		COMPort  string
@@ -58,6 +60,8 @@ const (
 	configKeyMasterVolumePercentAlt    = "master_volume_percent"
 	configKeyEnableStreamPCSwitching   = "enable_stream_pc_switching"
 	configKeyStreamPCMode              = "stream_pc_mode"
+	configKeyStreamPCOutputDevice      = "stream_pc_output_device"
+	configKeyNormalOutputDevice        = "normal_output_device"
 	configKeyInvertSliders             = "invert_sliders"
 	configKeyCOMPort                   = "com_port"
 	configKeyBaudRate                  = "baud_rate"
@@ -71,6 +75,7 @@ const (
 )
 
 var internalConfigPath = "."
+
 
 
 
@@ -168,12 +173,15 @@ func (cc *CanonicalConfig) Load() error {
 		"masterMapping", cc.MasterMapping,
 		"masterVolumePercent", cc.MasterVolumePercent,
 		"enableStreamPCSwitching", cc.EnableStreamPCSwitching,
+		"streamPCOutputDevice", cc.StreamPCOutputDevice,
+		"normalOutputDevice", cc.NormalOutputDevice,
 		"streamPCMode", cc.StreamPCMode,
 		"connectionInfo", cc.ConnectionInfo,
 		"invertSliders", cc.InvertSliders)
 
 	return nil
 }
+
 
 
 // SubscribeToChanges allows external components to receive updates when the config is reloaded
@@ -289,6 +297,19 @@ func (cc *CanonicalConfig) populateFromVipers() error {
 
 	cc.EnableStreamPCSwitching = cc.userConfig.GetBool(configKeyEnableStreamPCSwitching)
 
+	cc.StreamPCOutputDevice = cc.userConfig.GetString(configKeyStreamPCOutputDevice)
+	if cc.StreamPCOutputDevice == "" {
+		cc.StreamPCOutputDevice = cc.userConfig.GetString("stream_pc_device")
+	}
+
+	cc.NormalOutputDevice = cc.userConfig.GetString(configKeyNormalOutputDevice)
+	if cc.NormalOutputDevice == "" {
+		cc.NormalOutputDevice = cc.userConfig.GetString("normal_device")
+		if cc.NormalOutputDevice == "" {
+			cc.NormalOutputDevice = cc.userConfig.GetString("normal_mode_device")
+		}
+	}
+
 	if cc.EnableStreamPCSwitching {
 		if cc.internalConfig.IsSet(configKeyStreamPCMode) {
 			cc.StreamPCMode = cc.internalConfig.GetBool(configKeyStreamPCMode)
@@ -301,6 +322,7 @@ func (cc *CanonicalConfig) populateFromVipers() error {
 		// When switching is disabled, ignore preferences.yaml and force false
 		cc.StreamPCMode = false
 	}
+
 
 
 

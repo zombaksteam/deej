@@ -35,6 +35,12 @@ master_volume_persent: 90
 # set to true to enable Stream PC Mode switching in tray menu (hides tray option and disables mode when false)
 enable_stream_pc_switching: false
 
+# optional audio output device names to automatically switch to when entering/leaving Stream PC Mode
+# (leave empty or comment out if device switching is not needed)
+stream_pc_output_device: "Speakers (Realtek USB Audio)"
+normal_output_device: "Headphones (Shure MVX2U)"
+
+
 
 
 # set this to true if you want the controls inverted (i.e. top is 0%, bottom is 100%)

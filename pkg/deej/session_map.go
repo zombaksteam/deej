@@ -632,10 +632,21 @@ func (m *sessionMap) sessionMatchesMappingTarget(session Session) bool {
 func (m *sessionMap) onStreamPCModeChanged(enabled bool) {
 	if enabled {
 		if m.logger != nil {
-			m.logger.Info("Stream PC Mode enabled: applying master slider and maximizing mapped app volumes to 100%")
+			m.logger.Info("Stream PC Mode enabled: switching audio device, applying master slider and maximizing mapped app volumes to 100%")
 		}
 
-		// 1. Apply master volume from master_mapping slider
+		// 1. Switch audio output device if configured
+		if m.deej != nil && m.deej.config != nil && m.deej.config.StreamPCOutputDevice != "" {
+			if err := SetDefaultAudioOutputDevice(m.logger, m.deej.config.StreamPCOutputDevice); err != nil {
+				if m.logger != nil {
+					m.logger.Warnw("Failed to switch audio output device for Stream PC Mode",
+						"device", m.deej.config.StreamPCOutputDevice,
+						"error", err)
+				}
+			}
+		}
+
+		// 2. Apply master volume from master_mapping slider
 		masterSlider := m.deej.config.MasterMapping
 		m.sliderValuesLock.RLock()
 		volume, hasVolume := m.sliderValues[masterSlider]
@@ -652,7 +663,7 @@ func (m *sessionMap) onStreamPCModeChanged(enabled bool) {
 						}
 					}
 				} else {
-					// 2. Set all matching application sessions to 100% (1.0)
+					// 3. Set all matching application sessions to 100% (1.0)
 					if m.sessionMatchesMappingTarget(session) {
 						if session.GetVolume() < 1.0 {
 							if m.logger != nil {
@@ -674,7 +685,18 @@ func (m *sessionMap) onStreamPCModeChanged(enabled bool) {
 		})
 	} else {
 		if m.logger != nil {
-			m.logger.Info("Stream PC Mode disabled: restoring standard slider mapping volumes and setting master volume to configured percent")
+			m.logger.Info("Stream PC Mode disabled: switching audio device, restoring standard slider mapping volumes and setting master volume to configured percent")
+		}
+
+		// 1. Switch audio output device if configured
+		if m.deej != nil && m.deej.config != nil && m.deej.config.NormalOutputDevice != "" {
+			if err := SetDefaultAudioOutputDevice(m.logger, m.deej.config.NormalOutputDevice); err != nil {
+				if m.logger != nil {
+					m.logger.Warnw("Failed to switch audio output device for Normal Mode",
+						"device", m.deej.config.NormalOutputDevice,
+						"error", err)
+				}
+			}
 		}
 
 		targetMasterVol := float32(m.deej.config.MasterVolumePercent) / 100.0
@@ -684,7 +706,7 @@ func (m *sessionMap) onStreamPCModeChanged(enabled bool) {
 			targetMasterVol = 1.0
 		}
 
-		// Restore all sessions according to their normal slider mappings, and master to targetMasterVol
+		// 2. Restore all sessions according to their normal slider mappings, and master to targetMasterVol
 		m.iterate(func(key string, sessions []Session) {
 			for _, session := range sessions {
 				if session.Master() {
@@ -700,6 +722,7 @@ func (m *sessionMap) onStreamPCModeChanged(enabled bool) {
 		})
 	}
 }
+
 
 
 // applyStoredSliderVolume applies the stored in-memory slider percentage to the session
