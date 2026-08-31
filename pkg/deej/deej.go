@@ -14,10 +14,11 @@ import (
 
 const (
 	// Version is the current release version of deej
-	Version = "0.9.14"
+	Version = "0.9.15"
 
 	// RepoURL is the GitHub repository URL for deej
 	RepoURL = "https://github.com/zombaksteam/deej"
+
 
 
 
