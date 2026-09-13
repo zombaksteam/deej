@@ -62,7 +62,7 @@ func (s *baseSession) Path() string {
 }
 
 func (s *baseSession) Master() bool {
-	return s.master
+	return s.master && s.Key() == masterSessionName
 }
 
 func (s *baseSession) System() bool {

@@ -154,7 +154,7 @@ func newMasterSession(
 	}
 
 	s.logger = logger.Named(loggerKey)
-	s.master = true
+	s.master = (key == masterSessionName)
 	s.name = key
 	s.humanReadableDesc = key
 

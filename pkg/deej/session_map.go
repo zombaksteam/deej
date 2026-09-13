@@ -620,9 +620,9 @@ func (m *sessionMap) findSliderForSession(session Session) (int, bool) {
 	return foundSlider, found
 }
 
-// sessionMatchesMappingTarget checks whether a non-master session is mapped to any slider target
+// sessionMatchesMappingTarget checks whether a non-master, non-system, non-mic application session is mapped to any slider target
 func (m *sessionMap) sessionMatchesMappingTarget(session Session) bool {
-	if session.Master() {
+	if session.Master() || session.System() || session.Key() == inputSessionName || deviceSessionKeyPattern.MatchString(session.Key()) {
 		return false
 	}
 	_, ok := m.findSliderForSession(session)
@@ -654,7 +654,7 @@ func (m *sessionMap) onStreamPCModeChanged(enabled bool) {
 
 		m.iterate(func(key string, sessions []Session) {
 			for _, session := range sessions {
-				if session.Master() {
+				if session.Master() && session.Key() == masterSessionName {
 					if hasVolume && session.GetVolume() != volume {
 						if err := session.SetVolume(volume); err != nil {
 							if m.logger != nil {
@@ -662,21 +662,19 @@ func (m *sessionMap) onStreamPCModeChanged(enabled bool) {
 							}
 						}
 					}
-				} else {
+				} else if m.sessionMatchesMappingTarget(session) {
 					// 3. Set all matching application sessions to 100% (1.0)
-					if m.sessionMatchesMappingTarget(session) {
-						if session.GetVolume() < 1.0 {
+					if session.GetVolume() < 1.0 {
+						if m.logger != nil {
+							m.logger.Debugw("Stream PC Mode: setting mapped session volume to 100%",
+								"session", session.Key(),
+								"prevVolume", session.GetVolume())
+						}
+						if err := session.SetVolume(1.0); err != nil {
 							if m.logger != nil {
-								m.logger.Debugw("Stream PC Mode: setting mapped session volume to 100%",
+								m.logger.Warnw("Failed to set session volume to 100% in Stream PC Mode",
 									"session", session.Key(),
-									"prevVolume", session.GetVolume())
-							}
-							if err := session.SetVolume(1.0); err != nil {
-								if m.logger != nil {
-									m.logger.Warnw("Failed to set session volume to 100% in Stream PC Mode",
-										"session", session.Key(),
-										"error", err)
-								}
+									"error", err)
 							}
 						}
 					}
@@ -709,7 +707,7 @@ func (m *sessionMap) onStreamPCModeChanged(enabled bool) {
 		// 2. Restore all sessions according to their normal slider mappings, and master to targetMasterVol
 		m.iterate(func(key string, sessions []Session) {
 			for _, session := range sessions {
-				if session.Master() {
+				if session.Master() && session.Key() == masterSessionName {
 					if err := session.SetVolume(targetMasterVol); err != nil {
 						if m.logger != nil {
 							m.logger.Warnw("Failed to set master volume on Stream PC Mode exit", "error", err)
@@ -728,7 +726,7 @@ func (m *sessionMap) onStreamPCModeChanged(enabled bool) {
 // applyStoredSliderVolume applies the stored in-memory slider percentage to the session
 func (m *sessionMap) applyStoredSliderVolume(session Session) {
 	if m.deej != nil && m.deej.config != nil && m.deej.config.StreamPCMode {
-		if session.Master() {
+		if session.Master() && session.Key() == masterSessionName {
 			masterSlider := m.deej.config.MasterMapping
 			m.sliderValuesLock.RLock()
 			volume, hasVolume := m.sliderValues[masterSlider]

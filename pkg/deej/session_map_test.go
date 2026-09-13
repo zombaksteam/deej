@@ -444,6 +444,117 @@ func TestStreamPCMode_ToggleBackToNormal(t *testing.T) {
 	}
 }
 
+func TestBaseSession_Master(t *testing.T) {
+	// Master session output
+	masterOut := &baseSession{master: true, name: masterSessionName}
+	if !masterOut.Master() {
+		t.Errorf("masterOut.Master() = false; want true")
+	}
+
+	// Microphone input session (even if s.master was true)
+	micIn := &baseSession{master: true, name: inputSessionName}
+	if micIn.Master() {
+		t.Errorf("micIn.Master() = true; want false")
+	}
+
+	// Device endpoint session
+	deviceEndpoint := &baseSession{master: true, name: "Speakers (Realtek Audio)"}
+	if deviceEndpoint.Master() {
+		t.Errorf("deviceEndpoint.Master() = true; want false")
+	}
+}
+
+func TestStreamPCMode_MicrophoneNeverTouched(t *testing.T) {
+	sm := newSliderMap()
+	sm.set(1, []string{"mic"})
+	sm.set(2, []string{"discord.exe"})
+	sm.set(3, []string{"chrome.exe"})
+
+	masterSess := &mockSession{key: "master", master: true, volume: 0.50}
+	micSess := &mockSession{key: "mic", volume: 0.70}
+	discordSess := &mockSession{key: "discord.exe", volume: 0.40}
+	chromeSess := &mockSession{key: "chrome.exe", volume: 0.30}
+
+	cfg := &CanonicalConfig{
+		SliderMapping:       sm,
+		MasterMapping:       3,
+		MasterVolumePercent: 90,
+		StreamPCMode:        true,
+	}
+
+	sessionMapInstance := &sessionMap{
+		m: map[string][]Session{
+			"master":      {masterSess},
+			"mic":         {micSess},
+			"discord.exe": {discordSess},
+			"chrome.exe":  {chromeSess},
+		},
+		lock:             &sync.Mutex{},
+		sliderValues:     map[int]float32{1: 0.70, 2: 0.40, 3: 0.85},
+		sliderValuesLock: &sync.RWMutex{},
+		deej: &Deej{
+			config: cfg,
+		},
+	}
+
+	// 1. Activate Stream PC Mode
+	sessionMapInstance.onStreamPCModeChanged(true)
+
+	// Master must become slider 3's value (0.85)
+	if masterSess.GetVolume() != 0.85 {
+		t.Errorf("masterSess volume = %f; want 0.85", masterSess.GetVolume())
+	}
+	// Mapped apps must become 1.0
+	if discordSess.GetVolume() != 1.0 {
+		t.Errorf("discordSess volume = %f; want 1.0", discordSess.GetVolume())
+	}
+	if chromeSess.GetVolume() != 1.0 {
+		t.Errorf("chromeSess volume = %f; want 1.0", chromeSess.GetVolume())
+	}
+	// Microphone MUST NOT be touched (must not be 0.85 and must not be 1.0)
+	if micSess.GetVolume() != 0.70 {
+		t.Errorf("micSess volume = %f; want 0.70 (must not be modified on Stream PC Mode enable)", micSess.GetVolume())
+	}
+
+	// 2. Move slider 3 (master_mapping) to 0.25
+	sessionMapInstance.handleSliderMoveEvent(SliderMoveEvent{SliderID: 3, PercentValue: 0.25})
+
+	// Master volume adjusts to 0.25
+	if masterSess.GetVolume() != 0.25 {
+		t.Errorf("masterSess volume = %f; want 0.25", masterSess.GetVolume())
+	}
+	// Microphone MUST STILL NOT be touched
+	if micSess.GetVolume() != 0.70 {
+		t.Errorf("micSess volume = %f; want 0.70 (must not be modified on slider 3 move)", micSess.GetVolume())
+	}
+
+	// 3. Periodic / event session refresh calling applyStoredSliderVolume on mic
+	sessionMapInstance.applyStoredSliderVolume(micSess)
+	if micSess.GetVolume() != 0.70 {
+		t.Errorf("micSess volume = %f; want 0.70 (must not be modified on applyStoredSliderVolume)", micSess.GetVolume())
+	}
+
+	// 4. Disable Stream PC Mode
+	cfg.StreamPCMode = false
+	sessionMapInstance.onStreamPCModeChanged(false)
+
+	// Master volume should be set to master_volume_persent (90% = 0.90)
+	if masterSess.GetVolume() != 0.90 {
+		t.Errorf("masterSess volume = %f; want 0.90 (from master_volume_persent)", masterSess.GetVolume())
+	}
+	// Apps restore to their slider positions
+	if discordSess.GetVolume() != 0.40 {
+		t.Errorf("discordSess volume = %f; want 0.40", discordSess.GetVolume())
+	}
+	if chromeSess.GetVolume() != 0.25 {
+		t.Errorf("chromeSess volume = %f; want 0.25", chromeSess.GetVolume())
+	}
+	// Microphone restores to its slider 1 position (0.70), NOT master_volume_persent (0.90)
+	if micSess.GetVolume() != 0.70 {
+		t.Errorf("micSess volume = %f; want 0.70 (must not be set to master_volume_persent)", micSess.GetVolume())
+	}
+}
+
 func TestConfig_MasterMappingAndPreferences(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "deej-test-*")
 	if err != nil {
