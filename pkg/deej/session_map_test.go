@@ -3,12 +3,47 @@ package deej
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
+	"syscall"
 	"testing"
+	"unsafe"
 
+	ole "github.com/go-ole/go-ole"
+	wca "github.com/moutend/go-wca"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
+
+type processMemoryCountersEx struct {
+	CB                         uint32
+	PageFaultCount             uint32
+	PeakWorkingSetSize         uintptr
+	WorkingSetSize             uintptr
+	QuotaPeakPagedPoolUsage    uintptr
+	QuotaPagedPoolUsage        uintptr
+	QuotaPeakNonPagedPoolUsage uintptr
+	QuotaNonPagedPoolUsage     uintptr
+	PagefileUsage              uintptr
+	PeakPagefileUsage          uintptr
+	PrivateUsage               uintptr
+}
+
+func getProcessPrivateMB() float64 {
+	psapi := syscall.NewLazyDLL("psapi.dll")
+	getMemInfo := psapi.NewProc("GetProcessMemoryInfo")
+	handle, err := syscall.GetCurrentProcess()
+	if err != nil {
+		return 0
+	}
+	var mem processMemoryCountersEx
+	mem.CB = uint32(unsafe.Sizeof(mem))
+	ret, _, _ := getMemInfo.Call(uintptr(handle), uintptr(unsafe.Pointer(&mem)), uintptr(mem.CB))
+	if ret == 0 {
+		return 0
+	}
+	return float64(mem.PrivateUsage) / (1024.0 * 1024.0)
+}
 
 
 func TestIsPathTarget(t *testing.T) {
@@ -661,5 +696,118 @@ stream_pc_mode: true
 		t.Errorf("saved stream_pc_mode = %v; want false", iViper2.GetBool("stream_pc_mode"))
 	}
 }
+
+func TestWCASessionFinder_NoMemoryLeakAndChangeDetection(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	sf, err := newSessionFinder(logger)
+	if err != nil {
+		t.Fatalf("newSessionFinder failed: %v", err)
+	}
+	defer sf.Release()
+
+	sessions, err := sf.GetAllSessions()
+	if err != nil {
+		t.Fatalf("initial GetAllSessions failed: %v", err)
+	}
+	releaseSessionsSlice(sessions)
+
+	checker, ok := sf.(SessionChangesChecker)
+	if !ok {
+		t.Fatalf("expected wcaSessionFinder to implement SessionChangesChecker")
+	}
+
+	// Warm up
+	for i := 0; i < 5; i++ {
+		_ = checker.HasSessionChanges()
+		s, err := sf.GetAllSessions()
+		if err != nil {
+			t.Fatalf("warmup GetAllSessions failed: %v", err)
+		}
+		releaseSessionsSlice(s)
+	}
+	runtime.GC()
+	mem0 := getProcessPrivateMB()
+
+	for i := 0; i < 50; i++ {
+		if checker.HasSessionChanges() {
+			t.Fatalf("Expected HasSessionChanges() == false on iteration %d", i)
+		}
+	}
+	runtime.GC()
+	mem1 := getProcessPrivateMB()
+
+	for i := 0; i < 50; i++ {
+		if checker.HasSessionChanges() {
+			t.Fatalf("Expected HasSessionChanges() == false on iteration %d", i)
+		}
+	}
+	runtime.GC()
+	mem2 := getProcessPrivateMB()
+
+	for i := 0; i < 25; i++ {
+		s, err := sf.GetAllSessions()
+		if err != nil {
+			t.Fatalf("GetAllSessions iteration %d failed: %v", i, err)
+		}
+		releaseSessionsSlice(s)
+	}
+	runtime.GC()
+	mem3 := getProcessPrivateMB()
+
+	for i := 0; i < 25; i++ {
+		s, err := sf.GetAllSessions()
+		if err != nil {
+			t.Fatalf("GetAllSessions iteration %d failed: %v", i, err)
+		}
+		releaseSessionsSlice(s)
+	}
+	runtime.GC()
+	mem4 := getProcessPrivateMB()
+
+	t.Logf("Private Memory: mem0=%.2f MB -> 50 checks=%.2f MB -> +50 checks=%.2f MB -> 25 refreshes=%.2f MB -> +25 refreshes=%.2f MB",
+		mem0, mem1, mem2, mem3, mem4)
+
+	if mem4-mem0 > 10.0 {
+		t.Errorf("Excessive memory growth detected: grew from %.2f MB to %.2f MB", mem0, mem4)
+	}
+
+	// Verify real-time detection when a new audio session is created in Windows WASAPI
+	wcaFinder := sf.(*wcaSessionFinder)
+	outDev, inDev, err := wcaFinder.getDefaultAudioEndpoints()
+	if err == nil && outDev != nil {
+		if inDev != nil {
+			inDev.Release()
+		}
+		var ac *wca.IAudioClient
+		if err := outDev.Activate(wca.IID_IAudioClient, wca.CLSCTX_ALL, nil, &ac); err == nil && ac != nil {
+			var wfx *wca.WAVEFORMATEX
+			if err := ac.GetMixFormat(&wfx); err == nil && wfx != nil {
+				// Drain any prior events
+				select {
+				case <-wcaFinder.SubscribeToSessionEvents():
+				default:
+				}
+
+				if err := ac.Initialize(wca.AUDCLNT_SHAREMODE_SHARED, 0, 10000000, 0, wfx, nil); err == nil {
+					eventReceived := false
+					select {
+					case <-wcaFinder.SubscribeToSessionEvents():
+						eventReceived = true
+					default:
+					}
+					hasChanges := checker.HasSessionChanges()
+					t.Logf("New audio session detection: OnSessionCreated event=%v, HasSessionChanges=%v", eventReceived, hasChanges)
+					if !eventReceived && !hasChanges {
+						t.Errorf("Neither OnSessionCreated nor HasSessionChanges detected the newly created audio session!")
+					}
+				}
+				ole.CoTaskMemFree(uintptr(unsafe.Pointer(wfx)))
+			}
+			ac.Release()
+		}
+		outDev.Release()
+	}
+}
+
 
 

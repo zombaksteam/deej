@@ -178,7 +178,7 @@ func NewLogger(buildType string) (*zap.SugaredLogger, error) {
 		return logger.Sugar(), nil
 	}
 
-	// Release / default mode: daily rotating file in logs/YYYY-MM-DD.log
+	// Release / default mode: daily rotating file in logs/YYYY-MM-DD.log (InfoLevel to minimize disk writes)
 	fileWriter, err := newDailyFileWriter(logDirectory, logRetentionDays)
 	if err != nil {
 		return nil, fmt.Errorf("create daily file writer: %w", err)
@@ -187,7 +187,7 @@ func NewLogger(buildType string) (*zap.SugaredLogger, error) {
 	core := zapcore.NewCore(
 		zapcore.NewConsoleEncoder(encoderConfig),
 		zapcore.AddSync(fileWriter),
-		zap.DebugLevel,
+		zap.InfoLevel,
 	)
 
 	logger := zap.New(core)

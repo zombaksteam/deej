@@ -11,3 +11,8 @@ type SessionFinder interface {
 type SessionEventsNotifier interface {
 	SubscribeToSessionEvents() <-chan struct{}
 }
+
+// SessionChangesChecker represents an entity that can perform a lightweight check for audio session changes
+type SessionChangesChecker interface {
+	HasSessionChanges() bool
+}

@@ -55,8 +55,9 @@ type sessionMap struct {
 	deej   *Deej
 	logger *zap.SugaredLogger
 
-	m    map[string][]Session
-	lock sync.Locker
+	m           map[string][]Session
+	lock        sync.Locker
+	refreshLock sync.Mutex
 
 	sessionFinder SessionFinder
 
@@ -120,10 +121,15 @@ func newSessionMap(deej *Deej, logger *zap.SugaredLogger, sessionFinder SessionF
 }
 
 func (m *sessionMap) initialize() error {
-	if err := m.getAndAddSessions(); err != nil {
+	m.refreshLock.Lock()
+	err := m.getAndAddSessions()
+	m.refreshLock.Unlock()
+	if err != nil {
 		m.logger.Warnw("Failed to get all sessions during session map initialization", "error", err)
 		return fmt.Errorf("get all sessions during init: %w", err)
 	}
+
+	m.logger.Infow("Got all audio sessions successfully", "sessionMap", m)
 
 	m.setupOnConfigReload()
 	m.setupOnSliderMove()
@@ -135,6 +141,11 @@ func (m *sessionMap) initialize() error {
 func (m *sessionMap) release() error {
 	close(m.stopChannel)
 
+	m.refreshLock.Lock()
+	defer m.refreshLock.Unlock()
+
+	m.clear()
+
 	if err := m.sessionFinder.Release(); err != nil {
 		m.logger.Warnw("Failed to release session finder during session map release", "error", err)
 		return fmt.Errorf("release session finder during release: %w", err)
@@ -143,18 +154,20 @@ func (m *sessionMap) release() error {
 	return nil
 }
 
-// assumes the session map is clean!
-// only call on a new session map or as part of refreshSessions which calls reset
+// only call while holding m.refreshLock
 func (m *sessionMap) getAndAddSessions() error {
 	// mark that we're refreshing before anything else
 	m.lastSessionRefresh = time.Now()
-	m.unmappedSessions = nil
 
 	sessions, err := m.sessionFinder.GetAllSessions()
 	if err != nil {
 		m.logger.Warnw("Failed to get sessions from session finder", "error", err)
 		return fmt.Errorf("get sessions from SessionFinder: %w", err)
 	}
+
+	// clear and release previous sessions only after new sessions were successfully acquired
+	m.clear()
+	m.unmappedSessions = nil
 
 	for _, session := range sessions {
 		m.add(session)
@@ -168,7 +181,7 @@ func (m *sessionMap) getAndAddSessions() error {
 		m.applyStoredSliderVolume(session)
 	}
 
-	m.logger.Infow("Got all audio sessions successfully", "sessionMap", m)
+	m.logger.Debugw("Got all audio sessions successfully", "sessionMap", m)
 
 	return nil
 }
@@ -188,13 +201,49 @@ func (m *sessionMap) setupSessionWatcher() {
 			case <-m.stopChannel:
 				return
 			case <-eventChan:
+				// brief settle delay so newly created process audio session has its PID attached
+				time.Sleep(100 * time.Millisecond)
 				m.logger.Debug("Audio session event detected, refreshing sessions")
 				m.refreshSessions(false)
 			case <-ticker.C:
-				m.refreshSessions(false)
+				m.refreshIfSessionsChanged()
 			}
 		}
 	}()
+}
+
+func (m *sessionMap) refreshIfSessionsChanged() {
+	if m.sessionFinder == nil {
+		return
+	}
+
+	m.refreshLock.Lock()
+	if m.lastSessionRefresh.Add(minTimeBetweenSessionRefreshes).After(time.Now()) {
+		m.refreshLock.Unlock()
+		return
+	}
+
+	if checker, ok := m.sessionFinder.(SessionChangesChecker); ok {
+		changed := checker.HasSessionChanges()
+		if !changed {
+			m.refreshLock.Unlock()
+			return
+		}
+		if m.logger != nil {
+			m.logger.Debug("Detected audio session changes during check, refreshing sessions")
+		}
+	}
+
+	if err := m.getAndAddSessions(); err != nil {
+		if m.logger != nil {
+			m.logger.Warnw("Failed to re-acquire all audio sessions", "error", err)
+		}
+	} else {
+		if m.logger != nil {
+			m.logger.Debug("Re-acquired sessions successfully")
+		}
+	}
+	m.refreshLock.Unlock()
 }
 
 func (m *sessionMap) setupOnConfigReload() {
@@ -230,13 +279,13 @@ func (m *sessionMap) refreshSessions(force bool) {
 		return
 	}
 
+	m.refreshLock.Lock()
+	defer m.refreshLock.Unlock()
+
 	// make sure enough time passed since the last refresh, unless force is true in which case always clear
 	if !force && m.lastSessionRefresh.Add(minTimeBetweenSessionRefreshes).After(time.Now()) {
 		return
 	}
-
-	// clear and release sessions first
-	m.clear()
 
 	if err := m.getAndAddSessions(); err != nil {
 		if m.logger != nil {
@@ -311,10 +360,7 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 
 	// first of all, ensure our session map isn't moldy
 	if !m.lastSessionRefresh.IsZero() && m.lastSessionRefresh.Add(maxTimeBetweenSessionRefreshes).Before(time.Now()) {
-		if m.logger != nil {
-			m.logger.Debug("Stale session map detected on slider move, refreshing")
-		}
-		m.refreshSessions(true)
+		m.refreshIfSessionsChanged()
 	}
 
 

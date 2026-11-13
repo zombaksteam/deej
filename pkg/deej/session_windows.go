@@ -17,13 +17,43 @@ import (
 var (
 	kernel32                       = syscall.NewLazyDLL("kernel32.dll")
 	procOpenProcess                = kernel32.NewProc("OpenProcess")
+	procGetExitCodeProcess         = kernel32.NewProc("GetExitCodeProcess")
 	procQueryFullProcessImageNameW = kernel32.NewProc("QueryFullProcessImageNameW")
 	procCloseHandle                = kernel32.NewProc("CloseHandle")
 )
 
 const (
 	processQueryLimitedInformation = 0x1000
+	stillActive                    = 259
+	errorInvalidParameter          = syscall.Errno(87)
 )
+
+func processExists(pid uint32) bool {
+	if pid == 0 {
+		return true
+	}
+
+	handle, _, _ := procOpenProcess.Call(
+		uintptr(processQueryLimitedInformation),
+		uintptr(0),
+		uintptr(pid),
+	)
+	if handle == 0 {
+		return false
+	}
+	defer procCloseHandle.Call(handle)
+
+	var exitCode uint32
+	ret, _, _ := procGetExitCodeProcess.Call(
+		handle,
+		uintptr(unsafe.Pointer(&exitCode)),
+	)
+	if ret != 0 && exitCode != stillActive {
+		return false
+	}
+
+	return true
+}
 
 func getProcessPathByPID(pid uint32) (string, error) {
 	handle, _, err := procOpenProcess.Call(
@@ -32,9 +62,21 @@ func getProcessPathByPID(pid uint32) (string, error) {
 		uintptr(pid),
 	)
 	if handle == 0 {
+		if errors.Is(err, errorInvalidParameter) {
+			return "", errNoSuchProcess
+		}
 		return "", err
 	}
 	defer procCloseHandle.Call(handle)
+
+	var exitCode uint32
+	retExit, _, _ := procGetExitCodeProcess.Call(
+		handle,
+		uintptr(unsafe.Pointer(&exitCode)),
+	)
+	if retExit != 0 && exitCode != stillActive {
+		return "", errNoSuchProcess
+	}
 
 	var buf [1024]uint16
 	size := uint32(len(buf))
@@ -100,34 +142,34 @@ func newWCASession(
 		s.name = systemSessionName
 		s.humanReadableDesc = "system sounds"
 	} else {
-
-		// find our session's process name
-		process, err := ps.FindProcess(int(pid))
-		if err != nil {
-			logger.Warnw("Failed to find process name by ID", "pid", pid, "error", err)
-			defer s.Release()
-
-			return nil, fmt.Errorf("find process name by pid: %w", err)
-		}
-
-		// this PID may be invalid - this means the process has already been
-		// closed and we shouldn't create a session for it.
-		if process == nil {
+		path, err := getProcessPathByPID(pid)
+		if errors.Is(err, errNoSuchProcess) {
 			logger.Debugw("Process already exited, not creating audio session", "pid", pid)
 			return nil, errNoSuchProcess
 		}
 
-		s.processName = process.Executable()
+		if err == nil && path != "" {
+			cleanPath := filepath.Clean(strings.TrimPrefix(path, `\\?\`))
+			s.baseSession.path = cleanPath
+			s.processName = filepath.Base(cleanPath)
+		} else {
+			// Fallback to toolhelp snapshot if OpenProcess was denied
+			process, findErr := ps.FindProcess(int(pid))
+			if findErr != nil {
+				logger.Warnw("Failed to find process name by ID", "pid", pid, "error", findErr)
+				return nil, fmt.Errorf("find process name by pid: %w", findErr)
+			}
 
-		path, err := getProcessPathByPID(pid)
-		if err != nil || path == "" {
-			path, err = process.Path()
-			if err != nil {
-				logger.Warnw("Unable to get path for pid", "pid", pid, "error", err)
+			if process == nil {
+				logger.Debugw("Process already exited, not creating audio session", "pid", pid)
+				return nil, errNoSuchProcess
+			}
+
+			s.processName = process.Executable()
+			if procPath, pathErr := process.Path(); pathErr == nil && procPath != "" {
+				s.baseSession.path = filepath.Clean(strings.TrimPrefix(procPath, `\\?\`))
 			}
 		}
-		path = strings.TrimPrefix(path, `\\?\`)
-		s.baseSession.path = filepath.Clean(path)
 
 		s.name = s.processName
 		s.humanReadableDesc = fmt.Sprintf("%s (pid %d)", s.processName, s.pid)

@@ -4,6 +4,7 @@ package deej
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -148,6 +149,9 @@ func SetDefaultAudioOutputDevice(logger *zap.SugaredLogger, targetName string) e
 	if targetName == "" {
 		return nil
 	}
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	if err := ole.CoInitialize(0); err != nil {
 		oleCode := err.(*ole.OleError).Code()
